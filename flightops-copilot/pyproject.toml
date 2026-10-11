@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flightops-copilot"
+version = "1.0.0"
+description = "AI agent (RAG + text-to-SQL + forecasting) for airline catering operations"
+requires-python = ">=3.10"
+dependencies = [
+  "anthropic>=0.40",
+  "numpy>=1.26",
+  "pandas>=2.0",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+app = ["streamlit>=1.35", "plotly>=5.20"]
+api = ["fastapi>=0.110", "uvicorn>=0.29"]
+embeddings = ["sentence-transformers>=2.7"]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
