@@ -19,6 +19,9 @@ AIRCAFT = { #aircaft type -> (share of flights, average meals)
 "A321": (0.33, 160), "B737-900": (0.28, 150), "A220": (0.17, 90),
 "B757": (0.14, 170), "A330": (0.05, 260), "A350": (0.03, 300),
 }
+DEPARTMENTS = {  # share of daily labor hours
+    "Drivers": 0.30, "Loaders": 0.22, "Kitchen": 0.25, "Warehouse": 0.15, "Supervisors": 0.08,
+}
 
 # How many flights each day?
 def daily_flight_counts(dates: pd.DatetimeIndex, rng:np.ramdom.Generator) -> np.ndarray:
@@ -65,6 +68,40 @@ def build_flights(dates, counts, rng) -> pd.DataFrame:
     df.insert(0, "flight_id", np.arange(1, n + 1))
     return df
 
+def build_labor(dates, counts, hpf, rng) -> pd.DataFrame:
+    """Daily paid hours per department = flights x hours-per-flight x department share."""
+    rows = []
+    total = counts * hpf
+    for dept, share in DEPARTMENTS.items():
+        hours = total * share * rng.normal(1.0, 0.02, len(dates))
+        ot = hours * np.clip(rng.normal(0.08, 0.03, len(dates)), 0.0, 0.2)
+        rows.append(pd.DataFrame({
+            "work_date": dates.strftime("%Y-%m-%d"),
+            "department": dept,
+            "headcount": np.round(hours / 8).astype(int),
+            "regular_hours": (hours - ot).round(1),
+            "overtime_hours": ot.round(1),
+        }))
+    return pd.concat(rows, ignore_index=True)
+
+# The SQL View:
+SCHEMA_SQL = """
+CREATE INDEX IF NOT EXISTS idx_flights_date ON flights(flight_date);
+CREATE INDEX IF NOT EXISTS idx_labor_date ON labor_daily(work_date);
+DROP VIEW IF EXISTS daily_ops;
+CREATE VIEW daily_ops AS
+SELECT f.flight_date AS ops_date,
+        f.flights,
+        f.meals,
+        l.labor_hours,
+        ROUND(l.labor_hours * 1.0 / f.flights, 2) AS hours_per_flight
+FROM (SELECT flight_date, COUNT(*) AS flights, SUM(meals_loaded) AS meals
+        FROM flights GROUP BY flight_date) f
+JOIN (SELECT work_date, SUM(regular_hours + overtime_hours) AS labor_hours
+        FROM labor_daily GROUP BY work_date) l
+    ON l.work_date = f.flight_date;
+"""
+
 # The main program
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -79,13 +116,19 @@ def main() -> None:
     counts = daily_flight_counts(dates, rng)
     hpf = hours_per_flight(dates, rng)
     flights = build_flights(dates, counts, rng)
+    labor = build_labor(dates, counts, hpf, rng)
 
     DEFAULT_DB.parent.mkdir(parents = True, exist_ok=True)
+    if DEFAULT_DB.exists():
+        DEFAULT_DB.unlink()
     with sqlite3.connect(DEFAULT_DB) as con:
-        flights.to_sql("flights", con, index=False, if_exists="replace")
+        flights.to_sql("flights", con, index=False)
+        labor.to_sql("labor_daily", con, index=False)
+        con.executescript(SCHEMA_SQL)
 
     print(f"Database written to {DEFAULT_DB}")
     print(f"   flights: {len(flights):,} rows")
+    print(f"   labor_daily: {len(labor):,} rows")
 
 if __name__ == "__main__":
     main()

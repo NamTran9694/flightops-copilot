@@ -14,6 +14,16 @@ queries = {
         FROM flights GROUP BY aircraft_type ORDER BY flights DESC""",
     "Catering delay rate (%)": """
         SELECT ROUND(100.0 * AVG(catering_delay_min > 0), 2) FROM flights""",
+    "daily_ops view (first 3 days)": """
+        SELECT * FROM daily_ops LIMIT 3""",
+    "Hours per flight by month (KPI trend)": """
+        SELECT substr(ops_date, 1, 7) AS month,
+               ROUND(SUM(labor_hours) / SUM(flights), 2) AS hours_per_flight
+        FROM daily_ops GROUP BY month ORDER BY month""",
+    "Overtime ratio by department (%)": """
+        SELECT department,
+               ROUND(100.0 * SUM(overtime_hours) / SUM(regular_hours + overtime_hours), 1)
+        FROM labor_daily GROUP BY department""",
 }
 
 for title, q in queries.items():
