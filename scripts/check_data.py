@@ -35,7 +35,20 @@ queries = {
                     AND term_date >= m AND term_date < date(m, '+1 month'))
                  / (SELECT COUNT(*) FROM employees WHERE role = 'Driver'
                     AND hire_date < m AND (term_date IS NULL OR term_date >= m)), 1) AS attrition_pct
-        FROM months ORDER BY m""",       
+        FROM months ORDER BY m""",
+    "Safety incidents by year and severity": """
+        SELECT substr(incident_date, 1, 4) AS year, severity, COUNT(*)
+        FROM safety_incidents GROUP BY year, severity ORDER BY year, severity""",
+    "Recordable incidents before vs after audits": """
+        SELECT CASE WHEN incident_date < '2025-01-06' THEN '1. before audits'
+                    ELSE '2. after audits' END AS period,
+               COUNT(*) AS recordable_incidents
+        FROM safety_incidents WHERE severity = 'recordable' GROUP BY period""",
+    "Audit pass rate by quarter (%)": """
+        SELECT substr(audit_date, 1, 4) || '-Q' || ((CAST(substr(audit_date, 6, 2) AS INT) + 2) / 3) AS quarter,
+               ROUND(100.0 * AVG(passed), 1) AS pass_rate,
+               ROUND(AVG(score), 1) AS avg_score
+        FROM safety_audits GROUP BY quarter ORDER BY quarter""",       
 }
 
 for title, q in queries.items():

@@ -25,6 +25,7 @@ DEPARTMENTS = {  # share of daily labor hours
 }
 
 POLICY_DATE = pd.Timestamp("2025-03-01")   # driver +$2/h raise + safety incentive
+AUDIT_START = pd.Timestamp("2025-01-06")   # weekly driver safety audit begin
 
 # How many flights each day?
 def daily_flight_counts(dates: pd.DatetimeIndex, rng:np.random.Generator) -> np.ndarray:
@@ -141,10 +142,61 @@ def build_employees(start, end, rng) -> pd.DataFrame:
 
     return df
 
+# The safety function
+def build_safety(dates, employees, rng):
+    """Daily safety incidents and weekly driver audits."""
+    # --- A. Settings: incident types (with share) and descriptions
+    drivers = employees[employees.role == "Driver"]
+    incidents = []
+    types = {"vehicle_collision": 0.3, "aircraft_contact": 0.15, "slip_trip_fall": 0.25,
+             "lifting_injury": 0.20, "highloader_malfunction": 0.10}
+    desc = {
+        "vehicle_collision": "Catering truck made contact with ground equipment on the ramp.",
+        "aircraft_contact": "Highloader platform touched aircraft door frame during docking.",
+        "slip_trip_fall": "Employee slipped on wet surface in the loading area.",
+        "lifting_injury": "Strain reported while lifting a full meal cart.",
+        "highloader_malfunction": "Hydraulic lift stopped working during service.",       
+    }
+    # --- B. Incidents: each day, each severity has a small chance to happen
+    for d in dates:
+        # recordable incidents: ~1 / month before audits, ~1 per 2.5 months after
+        p_rec = 1 / 20 if d < AUDIT_START else 1 / 75
+        # near-misses / first-aid are more frequent and also trend down
+        p_minor = 0.25 if d < AUDIT_START else 0.12
+        for sev, p in (("recordable", p_rec), ("first_aid", p_minor * 0.4), ("near_miss", p_minor)):
+            if rng.random() < p:
+                t = rng.choice(list(types), p=list(types.values()))
+                active = drivers[(drivers.hire_date <= d.strftime("%Y-%m-%d")) &
+                                 (drivers.term_date.isna() | (drivers.term_date >= d.strftime("%Y-%m-%d")))]
+                emp_id = int(active.sample(1, random_state=int(rng.integers(1e9))).employee_id.iloc[0]) if len(active) else None
+                incidents.append({"incident_date": d.strftime("%Y-%m-%d"), "employee_id": emp_id,
+                                  "incident_type": t, "severity": sev, "description": desc[t]})
+    inc = pd.DataFrame(incidents)
+    inc.insert(0, "incident_id", np.arange(1, len(inc) + 1))
+
+    # --- c. Weekly audits: every Monday, audit about 35% of active drivers
+    audits = []
+    weeks = pd.date_range(max(AUDIT_START, dates[0]), dates[-1], freq="W-MON")
+    for w in weeks:
+        ws = w.strftime("%Y-%m-%d")
+        active = drivers[(drivers.hire_date <= ws) & (drivers.term_date.isna() | (drivers.term_date >= ws))]
+        sample = active.sample(frac=0.35, random_state=int(rng.integers(1e9)))
+        progress = (w - AUDIT_START).days / 700
+        scores = np.clip(rng.normal(82 + 10 * min(progress, 1), 7, len(sample)), 40, 100).round(1)
+        audits.append(pd.DataFrame({"audit_date": ws, "employee_id": sample.employee_id.values,
+                                    "score": scores, "passed": (scores >= 80).astype(int)}))
+
+    aud = pd.concat(audits, ignore_index=True) if audits else pd.DataFrame(
+        columns=["audit_date", "employee_id",  "score", "passed"])
+    aud.insert(0, "audit_id", np.arange(1, len(aud) + 1))
+    return inc, aud
+
 # The SQL View:
 SCHEMA_SQL = """
 CREATE INDEX IF NOT EXISTS idx_flights_date ON flights(flight_date);
 CREATE INDEX IF NOT EXISTS idx_labor_date ON labor_daily(work_date);
+CREATE INDEX IF NOT EXISTS idx_inc_date ON safety_incidents(incident_date);
+CREATE INDEX IF NOT EXISTS idx_aud_date ON safety_audits(audit_date);
 DROP VIEW IF EXISTS daily_ops;
 CREATE VIEW daily_ops AS
 SELECT f.flight_date AS ops_date,
@@ -176,6 +228,7 @@ def main() -> None:
     flights = build_flights(dates, counts, rng)
     labor = build_labor(dates, counts, hpf, rng)
     employees = build_employees(start, end, rng)
+    incidents, audits = build_safety(dates, employees, rng)
 
     DEFAULT_DB.parent.mkdir(parents = True, exist_ok=True)
     if DEFAULT_DB.exists():
@@ -184,12 +237,16 @@ def main() -> None:
         flights.to_sql("flights", con, index=False)
         labor.to_sql("labor_daily", con, index=False)
         employees.to_sql("employees", con, index=False)
+        incidents.to_sql("safety_incidents", con, index=False)
+        audits.to_sql("safety_audits", con, index=False)
         con.executescript(SCHEMA_SQL)
 
     print(f"Database written to {DEFAULT_DB}")
     print(f"   flights: {len(flights):,} rows")
     print(f"   labor_daily: {len(labor):,} rows")
     print(f"   employees: {len(employees):,} rows")
+    print(f"   safety_incidents: {len(incidents):,} rows")
+    print(f"   safety_audits: {len(audits):,} rows")
 
 if __name__ == "__main__":
     main()
