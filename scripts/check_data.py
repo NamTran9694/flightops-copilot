@@ -24,6 +24,18 @@ queries = {
         SELECT department,
                ROUND(100.0 * SUM(overtime_hours) / SUM(regular_hours + overtime_hours), 1)
         FROM labor_daily GROUP BY department""",
+    "Active employees by role": """
+        SELECT role, COUNT(*) FROM employees
+        WHERE term_date IS NULL GROUP BY role ORDER BY role""",
+    "Driver monthly attrition (%)": """
+        WITH months AS (SELECT DISTINCT substr(flight_date, 1, 7) || '-01' AS m FROM flights)
+        SELECT substr(m, 1, 7) AS month,
+               ROUND(100.0 *
+                 (SELECT COUNT(*) FROM employees WHERE role = 'Driver'
+                    AND term_date >= m AND term_date < date(m, '+1 month'))
+                 / (SELECT COUNT(*) FROM employees WHERE role = 'Driver'
+                    AND hire_date < m AND (term_date IS NULL OR term_date >= m)), 1) AS attrition_pct
+        FROM months ORDER BY m""",       
 }
 
 for title, q in queries.items():

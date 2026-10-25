@@ -15,16 +15,19 @@ DESTINATIONS = ["LAX", "JFK", "LGA", "BOS", "MCO", "DFW", "ORD", "SEA", "SLC", "
                 "DTW", "LAS", "PHX", "DEN", "MIA", "FLL", "TPA", "SFO", "CDG", "AMS",
                 "LHR", "FCO", "ICN", "NRT", "CUN", "SJU", "BWI", "DCA", "CLT", "RDU"]
 INTERNATIONAL = {"CDG", "AMS", "LHR", "FCO", "ICN", "NRT"}
-AIRCAFT = { #aircaft type -> (share of flights, average meals)
+AIRCRAFT = { #aircaft type -> (share of flights, average meals)
 "A321": (0.33, 160), "B737-900": (0.28, 150), "A220": (0.17, 90),
 "B757": (0.14, 170), "A330": (0.05, 260), "A350": (0.03, 300),
 }
+
 DEPARTMENTS = {  # share of daily labor hours
     "Drivers": 0.30, "Loaders": 0.22, "Kitchen": 0.25, "Warehouse": 0.15, "Supervisors": 0.08,
 }
 
+POLICY_DATE = pd.Timestamp("2025-03-01")   # driver +$2/h raise + safety incentive
+
 # How many flights each day?
-def daily_flight_counts(dates: pd.DatetimeIndex, rng:np.ramdom.Generator) -> np.ndarray:
+def daily_flight_counts(dates: pd.DatetimeIndex, rng:np.random.Generator) -> np.ndarray:
     """Number of flights per day = trend x weekday x month x noise"""
     t = np.linspace(0, 1, len(dates))
     base = 600 + 300 * t
@@ -46,13 +49,13 @@ def build_flights(dates, counts, rng) -> pd.DataFrame:
     """One row per flight."""
     n = counts.sum()
     flight_date = np.repeat(dates.values, counts)
-    types = list(AIRCAFT)
-    ac = rng.choice(types, size=n, p=[AIRCAFT[a][0] for a in types])
+    types = list(AIRCRAFT)
+    ac = rng.choice(types, size=n, p=[AIRCRAFT[a][0] for a in types])
     w = np.array([0.35 if d in INTERNATIONAL else 1.0 for d in DESTINATIONS])
     dest = rng.choice(DESTINATIONS, size=n, p=w / w.sum())
     intl = np.isin(dest, list(INTERNATIONAL))
     ac = np.where(intl, rng.choice(["A330", "A350"], size=n), ac)
-    meals = np.array([AIRCAFT[a][1] for a in ac]) * rng.normal(1.0, 0.88, n)
+    meals = np.array([AIRCRAFT[a][1] for a in ac]) * rng.normal(1.0, 0.88, n)
     dep_minutes = rng.integers(5 * 60, 23 * 60, size=n)
     delay = np.where(rng.random(n) < 0.04, rng.gamma(2.0, 6.0, n), 0).round().astype(int)
     df = pd.DataFrame({
@@ -78,11 +81,65 @@ def build_labor(dates, counts, hpf, rng) -> pd.DataFrame:
         rows.append(pd.DataFrame({
             "work_date": dates.strftime("%Y-%m-%d"),
             "department": dept,
-            "headcount": np.round(hours / 8).astype(int),
+            "headcount": np.round(hours / 8.4).astype(int),
             "regular_hours": (hours - ot).round(1),
             "overtime_hours": ot.round(1),
         }))
     return pd.concat(rows, ignore_index=True)
+
+# The employee Simulation
+def build_employees(start, end, rng) -> pd.DataFrame:
+    """Simulate hiring and termination per role, month by month."""
+    # --- A. Settitngs: role -> (starting headcount, base hourly rate in $)
+    roles = {"Driver": (470,18.0), "Loader": (400, 17.0), "Kitchen": (590, 16.5), "Warehouse": (360, 16.0), "Supervisor": (125, 25.0)}
+    months = pd.date_range(start, end, freq="MS")
+    growth = np.linspace(1.0, 1.35, len(months))
+    emp, eid = [], 1
+
+    for role, (base_n, rate) in roles.items():
+        active: list[dict] = []
+        # --- B. Staff who already worked here before the start date
+        for _ in range(base_n):
+            hire = start -pd.Timedelta(days=int(rng.integers(30, 1500)))
+            active.append({"employee_id": eid, "role": role, "hire_date": hire, "term_date": pd.NaT,
+                           "hourly_rate": round(rate + rng.normal(0, 0.8), 2)})
+            eid += 1
+        for i, m in enumerate(months):
+            # --- C. Attrition Rate for this month
+            if role == "Driver":
+                monthly_attr = 0.055 if m < POLICY_DATE else 0.015
+            else:
+                monthly_attr = 0.03
+            # --- D. Terminations: each active person may leave this month
+            for e in active:
+                if pd.isna(e["term_date"]) and rng.random() < monthly_attr:
+                    e["term_date"] = m + pd.Timedelta(days=int(rng.integers(0, 27)))
+            # --- E. Hiring: fill the gap up to the target headcount
+            current = sum(pd.isna(e["term_date"]) or e["term_date"] > m for e in active)
+            target = int(base_n * growth[i])
+            for _ in range(max(0, target - current)):
+                r = rate + (2.0 if role == "Driver" and m >= POLICY_DATE else 0.0)
+                active.append({"employee_id": eid, "role": role,
+                               "hire_date": m + pd.Timedelta(days=int(rng.integers(0, 27))),
+                               "term_date": pd.NaT, "hourly_rate": round(r + rng.normal(0, 0.8), 2)})
+                eid += 1
+
+        # existing drivers also get the +$2 raise on the policy date
+        if role == "Driver":
+            for e in active:
+                if pd.isna(e["term_date"]) or e["term_date"] >= POLICY_DATE:
+                    if e["hire_date"] < POLICY_DATE:
+                        e["hourly_rate"] = round(e["hourly_rate"] + 2.0, 2)
+        emp.extend(active)
+
+    # --- F. Clean up and format date as text
+    df = pd.DataFrame(emp)
+    df = df[df["hire_date"] <= end].copy()
+    df.loc[df["term_date"] > end, "term_date"] = pd.NaT
+    df["hire_date"] = df["hire_date"].dt.strftime("%Y-%m-%d")
+    df["term_date"] = df["term_date"].dt.strftime("%Y-%m-%d")
+
+    return df
 
 # The SQL View:
 SCHEMA_SQL = """
@@ -111,12 +168,14 @@ def main() -> None:
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)
-    dates = pd.date_range(args.start, args.end, freq = "D")
+    start, end = pd.Timestamp(args.start), pd.Timestamp(args.end)
+    dates = pd.date_range(start, end, freq = "D")
 
     counts = daily_flight_counts(dates, rng)
     hpf = hours_per_flight(dates, rng)
     flights = build_flights(dates, counts, rng)
     labor = build_labor(dates, counts, hpf, rng)
+    employees = build_employees(start, end, rng)
 
     DEFAULT_DB.parent.mkdir(parents = True, exist_ok=True)
     if DEFAULT_DB.exists():
@@ -124,11 +183,13 @@ def main() -> None:
     with sqlite3.connect(DEFAULT_DB) as con:
         flights.to_sql("flights", con, index=False)
         labor.to_sql("labor_daily", con, index=False)
+        employees.to_sql("employees", con, index=False)
         con.executescript(SCHEMA_SQL)
 
     print(f"Database written to {DEFAULT_DB}")
     print(f"   flights: {len(flights):,} rows")
     print(f"   labor_daily: {len(labor):,} rows")
+    print(f"   employees: {len(employees):,} rows")
 
 if __name__ == "__main__":
     main()
