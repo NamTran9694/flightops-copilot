@@ -1,0 +1,6 @@
+model,flights,hours_per_flight,labor_hours
+naive,6.98,2.97,6.64
+seasonal_naive,6.63,3.97,8.15
+linear,2.41,2.98,3.72
+xgboost,3.99,3.04,5.18
+hybrid,2.6,3.21,3.74

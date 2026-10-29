@@ -1,0 +1,4 @@
+# Extra packages for model comparison (not needed by the live app)
+xgboost>=2.0
+matplotlib>=3.8
+scikit-learn>=1.4
