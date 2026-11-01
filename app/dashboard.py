@@ -23,7 +23,7 @@ st.set_page_config(page_title="FlightOps Dashboard", page_icon="✈️", layout=
 # ----------- A. Make sure the database exists (the cloud server starts empty) -------------
 @st.cache_resource(show_spinner="Building the synthetic database (first start only, ~15 seconds)...")
 def ensure_database() -> bool:
-    if not settings.db_path.exists():
+    if not settings.db_path.exists() or settings.db_path.stat().st_size < 1_000_000:
         subprocess.run([sys.executable, str(ROOT / "scripts" / "generate_data.py")], check=True)
     return True
 
