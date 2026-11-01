@@ -29,3 +29,19 @@ def test_flight_forecast_backtest_error_is_small():
 def test_forecast_rejects_unknown_metric():
     with pytest.raises(ValueError):
         forecast.forecast_metric("revenue", 30)
+
+
+
+def test_plan_resources_only_for_the_future():
+    with pytest.raises(ValueError):
+        forecast.plan_resources("2026-01-01", "2026-01-31")
+
+
+def test_plan_resources_follows_the_rules():
+    p = forecast.plan_resources("2026-11-01", "2026-11-30")
+    # hours per flight never below the 90-day floor (budget policy)
+    assert p["hours_per_flight_used"] >= p["hours_per_flight_floor_90d"] - 0.01
+    # FTE rule: weekly hours / 40 x 1.12
+    weekly_hours = p["required_labor_hours_total"] / (p["days"] / 7)
+    assert p["required_fte_incl_12pct_buffer"] == pytest.approx(weekly_hours / 40 * 1.12, rel=0.01)
+    assert p["trucks_needed_peak_day"] >= p["trucks_needed_avg_day"]

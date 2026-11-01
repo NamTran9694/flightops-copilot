@@ -102,3 +102,49 @@ def forecast_metric(metric: str, horizon_days: int = 30, backtest_days: int = 60
         "backtest_mape_pct": round(bt_mape, 2),
         "model": "OLS: trend + day-of-week" + (" + month seasonality" if model.months else " (recent 180 days)"),
     }
+
+def plan_resources(start_date: str, end_date:str, db_path=None) -> dict:
+    """Labor hours, FTE and trucks needed for future period (follow_budget_planning)."""
+    df = load_daily(db_path)
+    start, end = pd.Timestamp(start_date), pd.Timestamp(end_date)
+    last = df.index[-1]
+    if start <= last:
+        raise ValueError(f"start_date msut be after the last actual date {last: %Y-%m-%d}.")
+    if (end - start).days > 366 or end < start:
+        raise ValueError("Period must be between 1 and 366 days.")
+    dates = pd.date_range(start, end, freq="D")
+
+    flights = fit_metric(df, "flights").predict(dates)
+    hpf_model = fit_metric(df, "hours_per_flight").predict(dates)
+    hpf_floor = float(df["hours_per_flight"].iloc[-90:].mean())
+    hpf = np.maximum(hpf_model, hpf_floor) # policy: latest 90-day avg is the floor
+
+    con = connect(db_path)
+    try:
+        wide_share = con.execute(
+            "SELECT AVG(aircraft_type IN ('A330','A350')) FROM flights "
+            "WHERE flight_date >= date((SELECT MAX(flight_date) FROM flights), '-90 day')").fetchone()[0]
+    finally:
+        con.close()
+
+    labor_hours = flights * hpf
+    weeks = len(dates) / 7
+    fte = labor_hours.sum() / weeks / 40 * 1.12
+    nb_equiv = flights * (1 + wide_share)     # widebody counts as 2 narrowbody
+    trucks = np.ceil(nb_equiv / 12 * 1.10)
+
+    return {
+        "period": f"{start:%Y-%m-%d} to {end:%Y-%m-%d}",
+        "days": len(dates),
+        "forecast_flights_total": int(flights.sum()),
+        "forecast_flights_daily_avg": round(float(flights.mean()), 1),
+        "hours_per_flight_used": round(float(hpf.mean()), 2),
+        "hours_per_flight_floor_90d": round(hpf_floor, 2),
+        "required_labor_hours_total": round(float(labor_hours.sum())),
+        "required_fte_incl_12pct_buffer": round(float(fte), 1),
+        "widebody_share": round(float(wide_share), 3),
+        "trucks_needed_peak_day": int(trucks.max()),
+        "trucks_needed_avg_day": round(float(trucks.mean()), 1),
+        "assumptions": "Rules from budget_planning_process: FTE = weekly hours / 40 x 1.12; "
+                       "trucks = narrowbody-equivalent flights / 12 x 1.10.",
+    }
