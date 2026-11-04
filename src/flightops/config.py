@@ -31,7 +31,10 @@ class Settings:
     # --- AI model settings
     provider: str = os.getenv("LLM_PROVIDER", "groq").lower()
     model_override: str = os.getenv("LLM_MODEL", "")
-    max_tokens: int = int(os.getenv("MAX_TOKENS", "1024"))
+    max_tokens: int = int(os.getenv("MAX_TOKENS", "2048"))
+    # --- Agent settings (Lesson 6) ---
+    max_agent_steps: int = int(os.getenv("MAX_AGENT_STEPS", "8"))
+    tool_output_chars: int = int(os.getenv("TOOL_OUTPUT_CHARS", "8000"))
 
     @property
     def model(self) -> str:
