@@ -6,3 +6,5 @@ __pycache__/
 .pytest_cache/
 data/flightops.db
 eval/results.json
+*.zip
+Instruction.md

@@ -1,0 +1,9 @@
+.git
+.venv
+.env
+.vscode
+__pycache__
+.pytest_cache
+data/flightops.db
+eval/results.json
+*.zip
