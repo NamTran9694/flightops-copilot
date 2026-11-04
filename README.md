@@ -146,4 +146,4 @@ flightops-copilot/
 
 ## Author
 
-**Nam Tran**: Data Analyst → AI Engineer · [LinkedIn](https://www.linkedin.com/in/YOUR-LINKEDIN) · [GitHub](https://github.com/NamTran9694)
+**Nam Tran**: Data Analyst → AI Engineer · [LinkedIn]([https://www.linkedin.com/in/YOUR-LINKEDIN](https://www.linkedin.com/in/hoai-nam-tran-06091994cr/) · [GitHub](https://github.com/NamTran9694)
